@@ -1,0 +1,6 @@
+{
+  "name": "Architectural Spatial Experience Simulator",
+  "description": "An interactive 3D tool for architects and designers to simulate human-scale spatial perception, ceiling height, walkway widths, and spatial compression within architectural models.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
