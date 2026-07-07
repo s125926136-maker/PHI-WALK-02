@@ -188,6 +188,7 @@ export class EngineRegistry {
   private engines: Map<string, AnalysisEngine> = new Map();
   private sortedEngines: AnalysisEngine[] = [];
   private lastUpdateTimes: Map<string, number> = new Map();
+  private initializedEngines: Set<string> = new Set();
   private cachedScene: THREE.Scene | null = null;
   private cachedCamera: THREE.Camera | null = null;
   private cachedRenderer: THREE.WebGLRenderer | null = null;
@@ -212,11 +213,7 @@ export class EngineRegistry {
     this.rebuildSortedEngines();
 
     if (this.cachedScene && this.cachedCamera && this.cachedRenderer) {
-      try {
-        engine.initialize(this.cachedScene, this.cachedCamera, this.cachedRenderer);
-      } catch (err) {
-        console.error(`Failed to initialize registered engine "${engine.metadata.name}":`, err);
-      }
+      this.initializeEngine(engine, this.cachedScene, this.cachedCamera, this.cachedRenderer);
     }
   }
 
@@ -226,7 +223,7 @@ export class EngineRegistry {
   public unregister(name: string): void {
     const engine = this.engines.get(name);
     if (engine) {
-      engine.dispose();
+      this.disposeEngine(engine);
       this.engines.delete(name);
       this.lastUpdateTimes.delete(name);
       this.rebuildSortedEngines();
@@ -259,11 +256,7 @@ export class EngineRegistry {
     this.validateDependencies();
 
     for (const engine of this.sortedEngines) {
-      try {
-        engine.initialize(scene, camera, renderer);
-      } catch (err) {
-        console.error(`Failed to initialize engine "${engine.metadata.name}":`, err);
-      }
+      this.initializeEngine(engine, scene, camera, renderer);
     }
   }
 
@@ -336,15 +329,15 @@ export class EngineRegistry {
    */
   public disposeAll(): void {
     for (const engine of this.sortedEngines) {
-      try {
-        engine.dispose();
-      } catch (err) {
-        console.error(`Error disposing engine "${engine.metadata.name}":`, err);
-      }
+      this.disposeEngine(engine);
     }
     this.engines.clear();
     this.sortedEngines = [];
     this.lastUpdateTimes.clear();
+    this.initializedEngines.clear();
+    this.cachedScene = null;
+    this.cachedCamera = null;
+    this.cachedRenderer = null;
   }
 
   private rebuildSortedEngines(): void {
@@ -362,6 +355,30 @@ export class EngineRegistry {
           );
         }
       }
+    }
+  }
+
+  private initializeEngine(engine: AnalysisEngine, scene: THREE.Scene, camera: THREE.Camera, renderer: THREE.WebGLRenderer): void {
+    if (this.initializedEngines.has(engine.metadata.name)) return;
+
+    try {
+      engine.initialize(scene, camera, renderer);
+      engine.onEnable();
+      this.initializedEngines.add(engine.metadata.name);
+    } catch (err) {
+      console.error(`Failed to initialize engine "${engine.metadata.name}":`, err);
+    }
+  }
+
+  private disposeEngine(engine: AnalysisEngine): void {
+    if (!this.initializedEngines.has(engine.metadata.name)) return;
+
+    try {
+      engine.onDisable();
+      engine.dispose();
+      this.initializedEngines.delete(engine.metadata.name);
+    } catch (err) {
+      console.error(`Error disposing engine "${engine.metadata.name}":`, err);
     }
   }
 }

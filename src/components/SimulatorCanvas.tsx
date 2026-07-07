@@ -1372,30 +1372,25 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
 
     // 5. INITIALIZE SPATIAL MEASUREMENT ENGINE USING THE PHI WALK ANALYSIS FRAMEWORK
     const measureEngine = new SpatialMeasurementEngine();
-    measureEngine.initialize(scene, camera, renderer);
     measureEngineRef.current = measureEngine;
 
     EngineRegistry.getInstance().register(measureEngine);
-    measureEngine.onEnable();
     pluginRegistry.register(new AnalysisEnginePluginAdapter(measureEngine));
 
     // 5a. INITIALIZE SOLAR ENGINE USING THE PHI WALK ANALYSIS FRAMEWORK
     const solarEngine = new SolarEngine();
-    solarEngine.initialize(scene, camera, renderer);
     solarEngineRef.current = solarEngine;
 
     EngineRegistry.getInstance().register(solarEngine);
-    solarEngine.onEnable();
     pluginRegistry.register(new AnalysisEnginePluginAdapter(solarEngine));
 
     // 5c. INITIALIZE WIND ENGINE USING THE PHI WALK ANALYSIS FRAMEWORK
     const windEngine = new WindEngine();
-    windEngine.initialize(scene, camera, renderer);
     windEngineRef.current = windEngine;
 
     EngineRegistry.getInstance().register(windEngine);
-    windEngine.onEnable();
     pluginRegistry.register(new AnalysisEnginePluginAdapter(windEngine));
+    EngineRegistry.getInstance().initializeAll(scene, camera, renderer);
 
     // 5b. CREATE SUN ANALYSIS VISUALS
     const sunGroup = new THREE.Group();
@@ -1665,21 +1660,18 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
     return () => {
       resizeObserver.disconnect();
       if (measureEngineRef.current) {
-        EngineRegistry.getInstance().unregister('measure-engine');
         pluginRegistry.unregister('measure-engine');
-        measureEngineRef.current.dispose();
+        EngineRegistry.getInstance().unregister('measure-engine');
         measureEngineRef.current = null;
       }
       if (solarEngineRef.current) {
-        EngineRegistry.getInstance().unregister('solar-engine');
         pluginRegistry.unregister('solar-engine');
-        solarEngineRef.current.dispose();
+        EngineRegistry.getInstance().unregister('solar-engine');
         solarEngineRef.current = null;
       }
       if (windEngineRef.current) {
-        EngineRegistry.getInstance().unregister('wind-engine');
         pluginRegistry.unregister('wind-engine');
-        windEngineRef.current.dispose();
+        EngineRegistry.getInstance().unregister('wind-engine');
         windEngineRef.current = null;
       }
       runtimeRef.current?.dispose();

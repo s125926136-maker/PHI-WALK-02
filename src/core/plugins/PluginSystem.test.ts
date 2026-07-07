@@ -290,10 +290,10 @@ describe('Plugin System', () => {
       expect(adapter.version).toBe('1.2.3');
       expect(adapter.priority).toBe(42);
 
-      // Initialize
+      // Initialize is intentionally a no-op; EngineRegistry owns analysis engine lifecycle.
       adapter.initialize(mockContext);
-      expect(mockEngineInitialize).toHaveBeenCalledWith(mockContext.scene, mockContext.camera, mockContext.renderer);
-      expect(mockEngineOnEnable).toHaveBeenCalled();
+      expect(mockEngineInitialize).not.toHaveBeenCalled();
+      expect(mockEngineOnEnable).not.toHaveBeenCalled();
 
       // Update
       adapter.update(0.016, mockContext);
@@ -305,10 +305,10 @@ describe('Plugin System', () => {
         timestamp: 123456
       }));
 
-      // Dispose
+      // Dispose is intentionally a no-op; EngineRegistry owns analysis engine lifecycle.
       adapter.dispose();
-      expect(mockEngineOnDisable).toHaveBeenCalled();
-      expect(mockEngineDispose).toHaveBeenCalled();
+      expect(mockEngineOnDisable).not.toHaveBeenCalled();
+      expect(mockEngineDispose).not.toHaveBeenCalled();
     });
   });
 });
