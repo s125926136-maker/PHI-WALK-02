@@ -23,9 +23,13 @@ export class EngineFactory {
     const threeSceneManager = new ThreeSceneManager();
     const simulationLoop = new SimulationLoop();
 
-    // Register plugins globally in PluginRegistry
-    pluginRegistry.register(new TelemetryPluginAdapter());
-    pluginRegistry.register(new AccessibilityPlugin());
+    // Register core plugins globally once.
+    if (!pluginRegistry.has('telemetry-plugin')) {
+      pluginRegistry.register(new TelemetryPluginAdapter());
+    }
+    if (!pluginRegistry.has('accessibility-plugin')) {
+      pluginRegistry.register(new AccessibilityPlugin());
+    }
 
     return {
       characterController,

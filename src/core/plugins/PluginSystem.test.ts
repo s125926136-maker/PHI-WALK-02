@@ -76,6 +76,38 @@ describe('Plugin System', () => {
       expect(registry.getEnabledPlugins()).toContain(p);
     });
 
+    it('should reject duplicate plugin IDs without disposing the existing plugin', () => {
+      const existingDispose = vi.fn();
+      const duplicateDispose = vi.fn();
+      const existing: IPlugin = {
+        id: 'test-p',
+        name: 'Existing Plugin',
+        version: '1.0.0',
+        initialize: vi.fn(),
+        update: vi.fn(),
+        dispose: existingDispose
+      };
+      const duplicate: IPlugin = {
+        id: 'test-p',
+        name: 'Duplicate Plugin',
+        version: '1.0.0',
+        initialize: vi.fn(),
+        update: vi.fn(),
+        dispose: duplicateDispose
+      };
+
+      registry.register(existing);
+
+      expect(() => registry.register(duplicate)).toThrowError(
+        'Plugin with id "test-p" is already registered.'
+      );
+      expect(registry.getPlugins()).toContain(existing);
+      expect(registry.getPlugins()).not.toContain(duplicate);
+      expect(registry.getEnabledPlugins()).toContain(existing);
+      expect(existingDispose).not.toHaveBeenCalled();
+      expect(duplicateDispose).not.toHaveBeenCalled();
+    });
+
     it('should maintain deterministic execution order based on priority', () => {
       const pLow: IPlugin = {
         id: 'z-low',
