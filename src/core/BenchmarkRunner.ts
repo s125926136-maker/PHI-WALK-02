@@ -319,6 +319,43 @@ function gatherSceneMetrics(scene: THREE.Scene): SceneMetrics {
   };
 }
 
+function disposeBenchmarkSceneResources(scene: THREE.Scene): void {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  const textures = new Set<THREE.Texture>();
+
+  scene.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh)) {
+      return;
+    }
+
+    if (obj.geometry) {
+      geometries.add(obj.geometry);
+    }
+
+    const materialList = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const material of materialList) {
+      if (!material) {
+        continue;
+      }
+
+      materials.add(material);
+
+      for (const key of Object.keys(material)) {
+        const value = (material as unknown as Record<string, unknown>)[key];
+        if (value instanceof THREE.Texture) {
+          textures.add(value);
+        }
+      }
+    }
+  });
+
+  textures.forEach((texture) => texture.dispose());
+  materials.forEach((material) => material.dispose());
+  geometries.forEach((geometry) => geometry.dispose());
+  scene.clear();
+}
+
 export class BenchmarkRunner {
   /**
    * Run full programmatic benchmark suite
@@ -602,7 +639,7 @@ export class BenchmarkRunner {
       measureEngine.dispose();
       solarEngine.dispose();
       windEngine.dispose();
-      scene.clear();
+      disposeBenchmarkSceneResources(scene);
     }
 
     // Unhook raycasters
