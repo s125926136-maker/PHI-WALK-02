@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import * as fflate from 'fflate';
 import { 
@@ -140,6 +140,59 @@ function createSunTexture() {
 
   const texture = new THREE.CanvasTexture(canvas);
   return texture;
+}
+
+function disposeSimulatorObject3D(object: THREE.Object3D | null): void {
+  if (!object) return;
+
+  object.parent?.remove(object);
+
+  const disposedGeometries = new Set<THREE.BufferGeometry>();
+  const disposedMaterials = new Set<THREE.Material>();
+  const disposedTextures = new Set<THREE.Texture>();
+  const textureKeys = [
+    'map',
+    'alphaMap',
+    'aoMap',
+    'bumpMap',
+    'displacementMap',
+    'emissiveMap',
+    'envMap',
+    'lightMap',
+    'metalnessMap',
+    'normalMap',
+    'roughnessMap',
+  ];
+
+  const disposeMaterial = (material: THREE.Material) => {
+    if (disposedMaterials.has(material)) return;
+
+    for (const key of textureKeys) {
+      const texture = (material as unknown as Record<string, unknown>)[key];
+      if (texture instanceof THREE.Texture && !disposedTextures.has(texture)) {
+        texture.dispose();
+        disposedTextures.add(texture);
+      }
+    }
+
+    material.dispose();
+    disposedMaterials.add(material);
+  };
+
+  object.traverse((child) => {
+    if (child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Sprite) {
+      if (child.geometry && !disposedGeometries.has(child.geometry)) {
+        child.geometry.dispose();
+        disposedGeometries.add(child.geometry);
+      }
+
+      if (Array.isArray(child.material)) {
+        child.material.forEach(disposeMaterial);
+      } else if (child.material) {
+        disposeMaterial(child.material);
+      }
+    }
+  });
 }
 
 export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
@@ -535,8 +588,8 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
   };
 
   // ThreeJS References stored in mutable refs to bypass React state re-render lags
-  const runtimeRef = useRef(new EngineRuntime());
-  const threeSceneManagerRef = useRef<ThreeSceneManager>(runtimeRef.current.engine.threeSceneManager);
+  const runtimeRef = useRef<EngineRuntime | null>(null);
+  const threeSceneManagerRef = useRef<ThreeSceneManager | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -547,33 +600,33 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
   const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
   
   // CharacterController reference
-  const characterControllerRef = useRef<CharacterController>(runtimeRef.current.engine.characterController);
-  const simulationLoopRef = useRef<SimulationLoop>(runtimeRef.current.engine.simulationLoop);
-  const cameraControllerRef = useRef<CameraController>(runtimeRef.current.engine.cameraController);
-  const inputManagerRef = useRef<InputManager>(runtimeRef.current.engine.inputManager);
+  const characterControllerRef = useRef<CharacterController | null>(null);
+  const simulationLoopRef = useRef<SimulationLoop | null>(null);
+  const cameraControllerRef = useRef<CameraController | null>(null);
+  const inputManagerRef = useRef<InputManager | null>(null);
   const shadowLogCounter = useRef<number>(0);
   const shadowSpamTimer = useRef<number>(0);
 
   // Player state refs for physics & rotation
-  const playerPos = useRef<THREE.Vector3>(characterControllerRef.current.position);
-  const playerVelocity = useRef<THREE.Vector3>(characterControllerRef.current.velocity);
+  const playerPos = useRef<THREE.Vector3>(new THREE.Vector3());
+  const playerVelocity = useRef<THREE.Vector3>(new THREE.Vector3());
   
   // Proxy objects to read directly from characterControllerRef.current
   const cameraYaw = {
     get current() {
-      return characterControllerRef.current.cameraYaw;
+      return characterControllerRef.current?.cameraYaw ?? 0;
     }
   };
   const cameraPitch = {
     get current() {
-      return characterControllerRef.current.cameraPitch;
+      return characterControllerRef.current?.cameraPitch ?? 0;
     }
   };
   
   // Proxy object to read directly from characterControllerRef.current.currentEyeHeight
   const currentEyeHeight = {
     get current() {
-      return characterControllerRef.current.currentEyeHeight;
+      return characterControllerRef.current?.currentEyeHeight ?? settings.eyeHeight;
     }
   };
 
@@ -681,7 +734,7 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
 
   // InputManager binding and configuration updates
   useEffect(() => {
-    if (canvasRef.current && containerRef.current) {
+    if (canvasRef.current && containerRef.current && inputManagerRef.current && characterControllerRef.current && cameraControllerRef.current) {
       inputManagerRef.current.bind(
         canvasRef.current,
         containerRef.current,
@@ -719,12 +772,14 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
     }
 
     return () => {
-      inputManagerRef.current.unbind();
+      inputManagerRef.current?.unbind();
     };
   }, []);
 
   // Update InputManager configuration on state/prop changes to ensure the callbacks/getters have latest values
   useEffect(() => {
+    if (!inputManagerRef.current) return;
+
     inputManagerRef.current.updateConfig({
       getSettings: () => settings,
       getIsLocked: () => isLocked,
@@ -767,7 +822,7 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
   ]);
 
   const toggleFullscreen = () => {
-    inputManagerRef.current.toggleFullscreen();
+    inputManagerRef.current?.toggleFullscreen();
   };
 
   // Trigger Camera Reset
@@ -778,6 +833,8 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
   }, [resetTrigger]);
 
   const resetPlayerPosition = () => {
+    if (!characterControllerRef.current) return;
+
     characterControllerRef.current.setCameraRotation(0, 0);
     avatarYawRef.current = Math.PI; // default face Z-
     characterControllerRef.current.resetVelocity();
@@ -866,7 +923,7 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
 
     // 5. Build/Rebuild Site Boundary (Dashed wireframe box outline)
     if (siteBoundaryRef.current) {
-      scene.remove(siteBoundaryRef.current);
+      disposeSimulatorObject3D(siteBoundaryRef.current);
       siteBoundaryRef.current = null;
     }
     
@@ -902,7 +959,7 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
 
     // 6. Build/Rebuild Vegetation Trees (low-poly abstract trees)
     if (vegetationGroupRef.current) {
-      scene.remove(vegetationGroupRef.current);
+      disposeSimulatorObject3D(vegetationGroupRef.current);
       vegetationGroupRef.current = null;
     }
     
@@ -948,7 +1005,7 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
 
     // 7. Build/Rebuild Spawn Point (Hologram ring at player starting spawn)
     if (spawnPointMeshRef.current) {
-      scene.remove(spawnPointMeshRef.current);
+      disposeSimulatorObject3D(spawnPointMeshRef.current);
       spawnPointMeshRef.current = null;
     }
     const spawnZ = box.min.z - 5.0;
@@ -1205,12 +1262,16 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
   ]);
 
   // INITIALIZE THREE.JS SCENE (Runs ONCE on mount)
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!canvasRef.current) return;
 
+    const runtime = new EngineRuntime();
+    runtimeRef.current = runtime;
+
     // Ensure all engine property refs are synchronized with the active engine instance
-    const activeEngine = runtimeRef.current.engine;
-    threeSceneManagerRef.current = activeEngine.threeSceneManager;
+    const activeEngine = runtime.engine;
+    const sceneManager = activeEngine.threeSceneManager;
+    threeSceneManagerRef.current = sceneManager;
     characterControllerRef.current = activeEngine.characterController;
     simulationLoopRef.current = activeEngine.simulationLoop;
     cameraControllerRef.current = activeEngine.cameraController;
@@ -1218,18 +1279,18 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
     playerPos.current = activeEngine.characterController.position;
     playerVelocity.current = activeEngine.characterController.velocity;
 
-    runtimeRef.current.initialize(canvasRef.current, containerRef.current!);
-    const scene = threeSceneManagerRef.current.scene!;
-    const camera = threeSceneManagerRef.current.camera!;
-    const renderer = threeSceneManagerRef.current.renderer!;
+    runtime.initialize(canvasRef.current, containerRef.current!);
+    const scene = sceneManager.scene!;
+    const camera = sceneManager.camera!;
+    const renderer = sceneManager.renderer!;
     
     sceneRef.current = scene;
     cameraRef.current = camera;
     rendererRef.current = renderer;
-    ambientLightRef.current = threeSceneManagerRef.current.ambientLight;
-    hemiLightRef.current = threeSceneManagerRef.current.hemiLight;
-    dirLightRef.current = threeSceneManagerRef.current.dirLight;
-    groundMeshRef.current = threeSceneManagerRef.current.groundMesh;
+    ambientLightRef.current = sceneManager.ambientLight;
+    hemiLightRef.current = sceneManager.hemiLight;
+    dirLightRef.current = sceneManager.dirLight;
+    groundMeshRef.current = sceneManager.groundMesh;
 
     // Construct Low-poly First Person Arm Group
     const fpArmGroup = new THREE.Group();
@@ -1326,7 +1387,7 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
       window.requestAnimationFrame(() => {
         if (!containerRef.current) return;
         const { width, height } = entries[0].contentRect;
-        threeSceneManagerRef.current.resize(width, height);
+        threeSceneManagerRef.current?.resize(width, height);
       });
     });
 
@@ -1364,30 +1425,25 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
 
     // 5. INITIALIZE SPATIAL MEASUREMENT ENGINE USING THE PHI WALK ANALYSIS FRAMEWORK
     const measureEngine = new SpatialMeasurementEngine();
-    measureEngine.initialize(scene, camera, renderer);
     measureEngineRef.current = measureEngine;
 
     EngineRegistry.getInstance().register(measureEngine);
-    measureEngine.onEnable();
     pluginRegistry.register(new AnalysisEnginePluginAdapter(measureEngine));
 
     // 5a. INITIALIZE SOLAR ENGINE USING THE PHI WALK ANALYSIS FRAMEWORK
     const solarEngine = new SolarEngine();
-    solarEngine.initialize(scene, camera, renderer);
     solarEngineRef.current = solarEngine;
 
     EngineRegistry.getInstance().register(solarEngine);
-    solarEngine.onEnable();
     pluginRegistry.register(new AnalysisEnginePluginAdapter(solarEngine));
 
     // 5c. INITIALIZE WIND ENGINE USING THE PHI WALK ANALYSIS FRAMEWORK
     const windEngine = new WindEngine();
-    windEngine.initialize(scene, camera, renderer);
     windEngineRef.current = windEngine;
 
     EngineRegistry.getInstance().register(windEngine);
-    windEngine.onEnable();
     pluginRegistry.register(new AnalysisEnginePluginAdapter(windEngine));
+    EngineRegistry.getInstance().initializeAll(scene, camera, renderer);
 
     // 5b. CREATE SUN ANALYSIS VISUALS
     const sunGroup = new THREE.Group();
@@ -1657,24 +1713,51 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
     return () => {
       resizeObserver.disconnect();
       if (measureEngineRef.current) {
-        EngineRegistry.getInstance().unregister('measure-engine');
         pluginRegistry.unregister('measure-engine');
-        measureEngineRef.current.dispose();
+        EngineRegistry.getInstance().unregister('measure-engine');
         measureEngineRef.current = null;
       }
       if (solarEngineRef.current) {
-        EngineRegistry.getInstance().unregister('solar-engine');
         pluginRegistry.unregister('solar-engine');
-        solarEngineRef.current.dispose();
+        EngineRegistry.getInstance().unregister('solar-engine');
         solarEngineRef.current = null;
       }
       if (windEngineRef.current) {
-        EngineRegistry.getInstance().unregister('wind-engine');
         pluginRegistry.unregister('wind-engine');
-        windEngineRef.current.dispose();
+        EngineRegistry.getInstance().unregister('wind-engine');
         windEngineRef.current = null;
       }
-      runtimeRef.current.dispose();
+      disposeSimulatorObject3D(siteBoundaryRef.current);
+      siteBoundaryRef.current = null;
+      disposeSimulatorObject3D(vegetationGroupRef.current);
+      vegetationGroupRef.current = null;
+      disposeSimulatorObject3D(spawnPointMeshRef.current);
+      spawnPointMeshRef.current = null;
+      disposeSimulatorObject3D(fpArmGroupRef.current);
+      fpArmGroupRef.current = null;
+      disposeSimulatorObject3D(dynReachGroupRef.current);
+      dynReachGroupRef.current = null;
+      disposeSimulatorObject3D(reachSphereRef.current);
+      reachSphereRef.current = null;
+      disposeSimulatorObject3D(clearanceCylinderRef.current);
+      clearanceCylinderRef.current = null;
+      disposeSimulatorObject3D(sunGroupRef.current);
+      sunGroupRef.current = null;
+      sunSphereRef.current = null;
+      disposeSimulatorObject3D(windGroupRef.current);
+      windGroupRef.current = null;
+      disposeSimulatorObject3D(accessibilityGroupRef.current);
+      accessibilityGroupRef.current = null;
+      turningCircleRef.current = null;
+      disposeSimulatorObject3D(avatarGroupRef.current);
+      avatarGroupRef.current = null;
+      runtimeRef.current?.dispose();
+      runtimeRef.current = null;
+      threeSceneManagerRef.current = null;
+      characterControllerRef.current = null;
+      simulationLoopRef.current = null;
+      cameraControllerRef.current = null;
+      inputManagerRef.current = null;
       sceneRef.current = null;
       cameraRef.current = null;
       rendererRef.current = null;
@@ -1684,18 +1767,19 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
   // LOAD ARCHITECTURAL MODEL (When space selection changes or custom file drops)
   useEffect(() => {
     const scene = sceneRef.current;
-    if (!scene) return;
+    const sceneManager = threeSceneManagerRef.current;
+    if (!scene || !sceneManager) return;
 
     onLoadingStateChange(true);
     setLoadError(null);
 
     // Clear previous model
-    threeSceneManagerRef.current.unloadModel();
+    sceneManager.unloadModel();
     currentModelGroupRef.current = null;
     cachedCollidableMeshesRef.current = [];
 
     const loadComplete = (group: THREE.Group, metadata: ModelFileInfo) => {
-      threeSceneManagerRef.current.currentModelGroup = group;
+      sceneManager.currentModelGroup = group;
       currentModelGroupRef.current = group;
       cachedCollidableMeshesRef.current = [];
       applyDisplayMode(scene, settings.displayMode);
@@ -1866,17 +1950,17 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
       };
 
       if (extension === 'gltf' || extension === 'glb') {
-        const loader = threeSceneManagerRef.current.gltfLoader;
+        const loader = sceneManager.gltfLoader;
         loader.load(fileUrl, (gltf) => {
           processLoadedModel(gltf.scene);
         }, undefined, loadFail);
       } else if (extension === 'obj') {
-        const loader = threeSceneManagerRef.current.objLoader;
+        const loader = sceneManager.objLoader;
         loader.load(fileUrl, (obj) => {
           processLoadedModel(obj);
         }, undefined, loadFail);
       } else if (extension === 'fbx') {
-        const loader = threeSceneManagerRef.current.fbxLoader;
+        const loader = sceneManager.fbxLoader;
         loader.load(fileUrl, (fbx) => {
           processLoadedModel(fbx);
         }, undefined, loadFail);
@@ -1963,10 +2047,15 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
     const scene = sceneRef.current;
     const camera = cameraRef.current;
     const renderer = rendererRef.current;
+    const runtime = runtimeRef.current;
+    const characterController = characterControllerRef.current;
+    const cameraController = cameraControllerRef.current;
+    const inputManager = inputManagerRef.current;
+    const simulationLoop = simulationLoopRef.current;
 
-    if (!scene || !camera || !renderer) return;
+    if (!scene || !camera || !renderer || !runtime || !characterController || !cameraController || !inputManager || !simulationLoop) return;
 
-    runtimeRef.current.start((dt, isPaused) => {
+    runtime.start((dt, isPaused) => {
       const context: SimulationContext = {
         scene,
         camera,
@@ -1986,9 +2075,9 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
         avatarYaw: avatarYawRef,
         currentEyeHeight,
         
-        characterController: characterControllerRef.current,
-        cameraController: cameraControllerRef.current,
-        inputManager: inputManagerRef.current,
+        characterController,
+        cameraController,
+        inputManager,
         
         cachedCollidableMeshes: cachedCollidableMeshesRef,
         currentModelGroup: currentModelGroupRef.current,
@@ -2034,12 +2123,12 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
       if (isPaused) {
         renderer.render(scene, camera);
       } else {
-        simulationLoopRef.current.update(dt, context);
+        simulationLoop.update(dt, context);
       }
     });
 
     return () => {
-      runtimeRef.current.stop();
+      runtime.stop();
     };
   }, [
     settings,

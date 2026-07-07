@@ -20,6 +20,35 @@ interface ThreeViewsProps {
   onModelNorthChange: (deg: number) => void;
 }
 
+function disposeMaterial(material: THREE.Material, disposedMaterials: Set<THREE.Material>): void {
+  if (disposedMaterials.has(material)) return;
+  material.dispose();
+  disposedMaterials.add(material);
+}
+
+function disposeObjectResources(object: THREE.Object3D | null): void {
+  if (!object) return;
+
+  const disposedGeometries = new Set<THREE.BufferGeometry>();
+  const disposedMaterials = new Set<THREE.Material>();
+
+  object.parent?.remove(object);
+  object.traverse((node) => {
+    if (!(node instanceof THREE.Mesh)) return;
+
+    if (node.geometry && !disposedGeometries.has(node.geometry)) {
+      node.geometry.dispose();
+      disposedGeometries.add(node.geometry);
+    }
+
+    if (Array.isArray(node.material)) {
+      node.material.forEach((material) => disposeMaterial(material, disposedMaterials));
+    } else if (node.material) {
+      disposeMaterial(node.material, disposedMaterials);
+    }
+  });
+}
+
 export const ThreeViews: React.FC<ThreeViewsProps> = ({
   currentSpace,
   uploadedFile,
@@ -42,6 +71,11 @@ export const ThreeViews: React.FC<ThreeViewsProps> = ({
 
   // Two-way binding state for Numeric Input
   const [inputValue, setInputValue] = useState(modelNorth.toString());
+
+  // Keep references to loaded model to support lightning fast re-renders.
+  // ThreeViews owns this preview-only model copy and disposes it on replacement/unmount.
+  const loadedModelRef = useRef<THREE.Group | null>(null);
+  const loadedModelKeyRef = useRef<string>('');
 
   // Keep local input state synchronized with prop changes from Slider, Arrow drags, or parent changes
   useEffect(() => {
@@ -135,6 +169,14 @@ export const ThreeViews: React.FC<ThreeViewsProps> = ({
   }, [isDraggingArrow]);
 
   useEffect(() => {
+    return () => {
+      disposeObjectResources(loadedModelRef.current);
+      loadedModelRef.current = null;
+      loadedModelKeyRef.current = '';
+    };
+  }, []);
+
+  useEffect(() => {
     let isDestroyed = false;
     let fileUrl: string | null = null;
 
@@ -148,19 +190,9 @@ export const ThreeViews: React.FC<ThreeViewsProps> = ({
 
         // Dispose previous model resources if any
         if (loadedModelRef.current) {
-          loadedModelRef.current.traverse((node) => {
-            if (node instanceof THREE.Mesh) {
-              if (node.geometry) node.geometry.dispose();
-              if (node.material) {
-                if (Array.isArray(node.material)) {
-                  node.material.forEach((m) => m.dispose());
-                } else {
-                  node.material.dispose();
-                }
-              }
-            }
-          });
+          disposeObjectResources(loadedModelRef.current);
           loadedModelRef.current = null;
+          loadedModelKeyRef.current = '';
         }
 
         const modelGroup = new THREE.Group();
@@ -215,10 +247,16 @@ export const ThreeViews: React.FC<ThreeViewsProps> = ({
           }
 
           // Apply visual standard material tuning
+          const disposedOriginalMaterials = new Set<THREE.Material>();
           modelGroup.traverse((node) => {
             if (node instanceof THREE.Mesh) {
               if (node.material) {
                 const originalColor = (node.material as any).color || new THREE.Color(0xffffff);
+                if (Array.isArray(node.material)) {
+                  node.material.forEach((material) => disposeMaterial(material, disposedOriginalMaterials));
+                } else {
+                  disposeMaterial(node.material, disposedOriginalMaterials);
+                }
                 node.material = new THREE.MeshStandardMaterial({
                   color: originalColor,
                   roughness: 0.9,
@@ -250,6 +288,7 @@ export const ThreeViews: React.FC<ThreeViewsProps> = ({
 
       // If we don't have a model loaded, stop rendering
       if (!loadedModelRef.current) return;
+      const previewModel = loadedModelRef.current;
 
       // 2. Render views instantly
       if (isDestroyed) return;
@@ -260,7 +299,7 @@ export const ThreeViews: React.FC<ThreeViewsProps> = ({
       scene.background = new THREE.Color(180 / 255, 210 / 255, 255 / 255);
 
       // Setup Ground Plane based on bounding box
-      const box = new THREE.Box3().setFromObject(loadedModelRef.current);
+      const box = new THREE.Box3().setFromObject(previewModel);
       const center = new THREE.Vector3();
       box.getCenter(center);
       const size = new THREE.Vector3();
@@ -304,7 +343,7 @@ export const ThreeViews: React.FC<ThreeViewsProps> = ({
       scene.add(dirLight2);
 
       // Add our cached model group to the scene (it is managed as single reference)
-      scene.add(loadedModelRef.current);
+      scene.add(previewModel);
 
       // Set up viewport sizes
       const width = 220;
@@ -390,6 +429,9 @@ export const ThreeViews: React.FC<ThreeViewsProps> = ({
         r3.render(scene, westCam);
         r3.dispose();
       }
+
+      scene.remove(previewModel);
+      disposeObjectResources(groundMesh);
     };
 
     run();
@@ -401,10 +443,6 @@ export const ThreeViews: React.FC<ThreeViewsProps> = ({
       }
     };
   }, [currentSpace, uploadedFile, corridorWidth, corridorHeight, modelNorth]);
-
-  // Keep references to loaded model to support lightning fast re-renders
-  const loadedModelRef = useRef<THREE.Group | null>(null);
-  const loadedModelKeyRef = useRef<string>('');
 
   return (
     <div className="space-y-4">

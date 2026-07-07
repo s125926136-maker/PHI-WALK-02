@@ -8,6 +8,7 @@ export class EngineRuntime {
   private _isRunning: boolean = false;
   private _isPaused: boolean = false;
   private _animId: number | null = null;
+  private _isDisposed: boolean = false;
 
   /**
    * Retrieves the current engine instance.
@@ -35,6 +36,9 @@ export class EngineRuntime {
    * Creates/initializes all runtime resources and initializes each subsystem.
    */
   public initialize(canvas: HTMLCanvasElement, container: HTMLElement): void {
+    if (this._isDisposed) {
+      throw new Error('EngineRuntime has been disposed and cannot be reinitialized.');
+    }
     if (this._isInitialized) return;
 
     // Initializes ThreeSceneManager
@@ -51,6 +55,9 @@ export class EngineRuntime {
    * Starts the requestAnimationFrame simulation/render loop.
    */
   public start(tick: (dt: number, isPaused: boolean) => void): void {
+    if (this._isDisposed) {
+      throw new Error('EngineRuntime has been disposed and cannot be restarted.');
+    }
     if (!this._isInitialized) {
       throw new Error('EngineRuntime is not initialized. Call initialize() first.');
     }
@@ -104,12 +111,15 @@ export class EngineRuntime {
    * Releases all resources and unbinds events.
    */
   public dispose(): void {
+    if (this._isDisposed) return;
+
     this.stop();
     if (this._engine) {
       this._engine.threeSceneManager.dispose();
       this._engine.inputManager.unbind();
     }
     this._isInitialized = false;
-    this._engine = EngineFactory.create();
+    this._isPaused = false;
+    this._isDisposed = true;
   }
 }

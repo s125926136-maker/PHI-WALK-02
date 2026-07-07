@@ -23,8 +23,7 @@ export class AnalysisEnginePluginAdapter implements IPlugin {
   }
 
   public initialize(context: PluginContext): void {
-    this.engine.initialize(context.scene, context.camera, context.renderer);
-    this.engine.onEnable();
+    // Analysis engine lifecycle is owned by EngineRegistry.
   }
 
   public update(dt: number, context: PluginContext): void {
@@ -46,7 +45,6 @@ export class AnalysisEnginePluginAdapter implements IPlugin {
   }
 
   public dispose(): void {
-    this.engine.onDisable();
-    this.engine.dispose();
+    // Analysis engine lifecycle is owned by EngineRegistry.
   }
 }

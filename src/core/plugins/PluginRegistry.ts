@@ -23,6 +23,10 @@ export class PluginRegistry {
    * Registers a plugin.
    */
   public register(plugin: IPlugin): void {
+    if (this.plugins.has(plugin.id)) {
+      throw new Error(`Plugin with id "${plugin.id}" is already registered.`);
+    }
+
     this.plugins.set(plugin.id, plugin);
     // By default, a newly registered plugin is enabled.
     if (!this.enabledStates.has(plugin.id)) {
@@ -73,6 +77,13 @@ export class PluginRegistry {
    */
   public getPlugins(): IPlugin[] {
     return Array.from(this.plugins.values());
+  }
+
+  /**
+   * Checks whether a plugin ID is already registered.
+   */
+  public has(id: string): boolean {
+    return this.plugins.has(id);
   }
 
   /**

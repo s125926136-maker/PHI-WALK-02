@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
 import { EngineRuntime } from './EngineRuntime';
+import { EngineFactory } from './EngineFactory';
 
 vi.mock('three', async (importOriginal) => {
   const actual = await importOriginal<typeof THREE>();
@@ -90,5 +91,27 @@ describe('EngineRuntime Unit Tests', () => {
     expect(runtime.isInitialized).toBe(false);
     expect(disposeSpy).toHaveBeenCalled();
     expect(unbindSpy).toHaveBeenCalled();
+  });
+
+  it('should not recreate engine subsystems after dispose', () => {
+    const createSpy = vi.spyOn(EngineFactory, 'create');
+    const originalEngine = runtime.engine;
+
+    vi.spyOn(originalEngine.threeSceneManager, 'dispose').mockImplementation(() => {});
+    vi.spyOn(originalEngine.inputManager, 'unbind').mockImplementation(() => {});
+
+    runtime.dispose();
+    runtime.dispose();
+
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(runtime.engine).toBe(originalEngine);
+    expect(runtime.isInitialized).toBe(false);
+    expect(runtime.isRunning).toBe(false);
+
+    const mockCanvas = document.createElement('canvas');
+    const mockContainer = document.createElement('div');
+    expect(() => runtime.initialize(mockCanvas, mockContainer)).toThrowError(
+      'EngineRuntime has been disposed and cannot be reinitialized.'
+    );
   });
 });

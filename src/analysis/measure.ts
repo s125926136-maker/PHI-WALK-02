@@ -21,10 +21,7 @@ export interface DimensionVisualizer {
 
 export function initDimensionVisualizer(colorHex: number): DimensionVisualizer {
   const group = new THREE.Group();
-  
-  // Main line with dummy points
-  const lineGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,0)]);
-  const lineMat = new THREE.LineBasicMaterial({
+  const createLineMaterial = () => new THREE.LineBasicMaterial({
     color: colorHex,
     transparent: true,
     opacity: 0.8,
@@ -32,12 +29,16 @@ export function initDimensionVisualizer(colorHex: number): DimensionVisualizer {
     depthWrite: false,
     depthTest: false
   });
+  
+  // Main line with dummy points
+  const lineGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,0)]);
+  const lineMat = createLineMaterial();
   const line = new THREE.Line(lineGeom, lineMat);
   group.add(line);
 
   // Arrow segments with dummy points
   const arrowGeom = new THREE.BufferGeometry();
-  const arrowSegments = new THREE.LineSegments(arrowGeom, lineMat);
+  const arrowSegments = new THREE.LineSegments(arrowGeom, createLineMaterial());
   group.add(arrowSegments);
 
   // Canvas and texture for text
@@ -358,7 +359,6 @@ export class SpatialMeasurementEngine implements AnalysisEngine {
     this.visualizers.eyeRay.group.visible = false;
 
     // 2. Create Laser Lines
-    const laserMat = new THREE.LineBasicMaterial({ color: 0x10b981, depthWrite: false }); // Emerald green
     const laserGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0)]);
 
     this.laserLines = {
@@ -369,6 +369,7 @@ export class SpatialMeasurementEngine implements AnalysisEngine {
       front: new THREE.Line(laserGeom.clone(), new THREE.LineBasicMaterial({ color: 0xec4899 })), // Pink
       back: new THREE.Line(laserGeom.clone(), new THREE.LineBasicMaterial({ color: 0xec4899 })),
     };
+    laserGeom.dispose();
 
     Object.values(this.laserLines).forEach(line => {
       line.visible = false;
