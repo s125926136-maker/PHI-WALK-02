@@ -43,6 +43,7 @@ import { EngineFactory } from '../core/EngineFactory';
 import { EngineRuntime } from '../core/EngineRuntime';
 import { PerformanceProfiler } from '../core/PerformanceProfiler';
 import { disposeSimulatorObject3D } from './simulator/threeDisposal';
+import { useEnvironmentObjects } from './simulator/useEnvironmentObjects';
 
 // Setup fflate globally for FBXLoader compression support
 if (typeof window !== 'undefined') {
@@ -116,31 +117,6 @@ export function getSkyColor(altitude: number): THREE.Color {
     color.setHex(0x030712);
   }
   return color;
-}
-
-// Helper to create glowing radial gradient sun texture
-function createSunTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-
-  ctx.clearRect(0, 0, 256, 256);
-
-  // Soft glowing radial gradient
-  const grad = ctx.createRadialGradient(128, 128, 12, 128, 128, 128);
-  grad.addColorStop(0.0, 'rgba(255, 255, 255, 1.0)');     // Pure white core
-  grad.addColorStop(0.12, 'rgba(254, 240, 138, 1.0)');   // Bright yellow
-  grad.addColorStop(0.3, 'rgba(245, 158, 11, 0.9)');     // Warm amber middle
-  grad.addColorStop(0.6, 'rgba(239, 68, 68, 0.25)');     // Soft reddish halo
-  grad.addColorStop(1.0, 'rgba(239, 68, 68, 0.0)');       // Fade to alpha
-
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 256, 256);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  return texture;
 }
 
 export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
@@ -373,6 +349,20 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
   const [sceneVegetationEnabled, setSceneVegetationEnabled] = useState(true);
   const [sceneSpawnPointEnabled, setSceneSpawnPointEnabled] = useState(true);
 
+  const {
+    sunGroupRef,
+    windGroupRef,
+    accessibilityGroupRef,
+    turningCircleRef,
+    updateGroundEnvironment,
+    createAnalysisEnvironmentObjects,
+    cleanupEnvironmentObjects,
+  } = useEnvironmentObjects({
+    sceneBoundaryEnabled,
+    sceneVegetationEnabled,
+    sceneSpawnPointEnabled,
+  });
+
   // Player HUD Toggles
   const [playerEnvelopeEnabled, setPlayerEnvelopeEnabled] = useState(true);
   const [playerDirectionArrowEnabled, setPlayerDirectionArrowEnabled] = useState(true);
@@ -392,9 +382,6 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
   const [windAngle, setWindAngle] = useState<number>(170); // in degrees
 
   // 3D Refs for Custom Elements
-  const siteBoundaryRef = useRef<THREE.LineSegments | null>(null);
-  const vegetationGroupRef = useRef<THREE.Group | null>(null);
-  const spawnPointMeshRef = useRef<THREE.Mesh | null>(null);
   const sunPathLineRef = useRef<THREE.Line | null>(null);
   const timeAccumulatorRef = useRef<number>(0);
   const isTimePlayingRef = useRef(false);
@@ -451,27 +438,6 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
       groundMeshRef.current.visible = showGround;
     }
   }, [showGround]);
-
-  // Toggle Site Boundary visibility reactively
-  useEffect(() => {
-    if (siteBoundaryRef.current) {
-      siteBoundaryRef.current.visible = sceneBoundaryEnabled;
-    }
-  }, [sceneBoundaryEnabled]);
-
-  // Toggle Vegetation visibility reactively
-  useEffect(() => {
-    if (vegetationGroupRef.current) {
-      vegetationGroupRef.current.visible = sceneVegetationEnabled;
-    }
-  }, [sceneVegetationEnabled]);
-
-  // Toggle Spawn Point visibility reactively
-  useEffect(() => {
-    if (spawnPointMeshRef.current) {
-      spawnPointMeshRef.current.visible = sceneSpawnPointEnabled;
-    }
-  }, [sceneSpawnPointEnabled]);
 
   // Handle dynamic scene sky background or dark workspace color
   useEffect(() => {
@@ -635,13 +601,6 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
 
   // Cached list of collidable meshes to avoid traversing the scene graph every frame
   const cachedCollidableMeshesRef = useRef<THREE.Object3D[]>([]);
-
-  // Analysis Layers visualizers
-  const sunGroupRef = useRef<THREE.Group | null>(null);
-  const sunSphereRef = useRef<THREE.Object3D | null>(null);
-  const windGroupRef = useRef<THREE.Group | null>(null);
-  const accessibilityGroupRef = useRef<THREE.Group | null>(null);
-  const turningCircleRef = useRef<THREE.Mesh | null>(null);
 
   // Pointer lock requests
   const requestPointerLock = () => {
@@ -838,133 +797,12 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
     const groundMesh = groundMeshRef.current;
     if (!scene || !groundMesh) return;
 
-    // 1. Compute bounding box of active model
-    const box = new THREE.Box3();
-    if (currentModelGroupRef.current) {
-      box.setFromObject(currentModelGroupRef.current);
-    } else {
-      // Default fallback size if no group is loaded (e.g. initial scene)
-      box.set(
-        new THREE.Vector3(-10, 0, -10),
-        new THREE.Vector3(10, 4, 10)
-      );
-    }
-
-    const size = new THREE.Vector3();
-    box.getSize(size);
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-
-    // 2. Apply formulas: Width/Depth + Margin * 2
-    const margin = settings.siteMargin !== undefined ? settings.siteMargin : 10;
-    const groundWidth = size.x + margin * 2;
-    const groundDepth = size.z + margin * 2;
-
-    // 3. Dispose old geometry and assign new one to avoid memory leaks
-    if (groundMesh.geometry) {
-      groundMesh.geometry.dispose();
-    }
-    groundMesh.geometry = new THREE.PlaneGeometry(groundWidth, groundDepth);
-
-    // 4. Align position with model center in X and Z, slightly below Y
-    groundMesh.position.set(center.x, -0.01, center.z);
-
-    // 5. Build/Rebuild Site Boundary (Dashed wireframe box outline)
-    if (siteBoundaryRef.current) {
-      disposeSimulatorObject3D(siteBoundaryRef.current);
-      siteBoundaryRef.current = null;
-    }
-    
-    const boundaryPoints = [];
-    const halfW = groundWidth / 2;
-    const halfD = groundDepth / 2;
-    
-    // Four corners of the site boundary slightly off the ground to avoid Z-fighting
-    const p1 = new THREE.Vector3(center.x - halfW, 0.02, center.z - halfD);
-    const p2 = new THREE.Vector3(center.x + halfW, 0.02, center.z - halfD);
-    const p3 = new THREE.Vector3(center.x + halfW, 0.02, center.z + halfD);
-    const p4 = new THREE.Vector3(center.x - halfW, 0.02, center.z + halfD);
-    
-    boundaryPoints.push(
-      p1, p2,
-      p2, p3,
-      p3, p4,
-      p4, p1
-    );
-    
-    const boundaryGeom = new THREE.BufferGeometry().setFromPoints(boundaryPoints);
-    const boundaryMat = new THREE.LineDashedMaterial({
-      color: 0xf59e0b, // beautiful amber orange
-      dashSize: 0.8,
-      gapSize: 0.4,
-      linewidth: 2,
+    updateGroundEnvironment({
+      scene,
+      groundMesh,
+      currentModelGroup: currentModelGroupRef.current,
+      siteMargin: settings.siteMargin,
     });
-    const siteBoundary = new THREE.LineSegments(boundaryGeom, boundaryMat);
-    siteBoundary.computeLineDistances();
-    siteBoundary.visible = sceneBoundaryEnabled;
-    scene.add(siteBoundary);
-    siteBoundaryRef.current = siteBoundary;
-
-    // 6. Build/Rebuild Vegetation Trees (low-poly abstract trees)
-    if (vegetationGroupRef.current) {
-      disposeSimulatorObject3D(vegetationGroupRef.current);
-      vegetationGroupRef.current = null;
-    }
-    
-    const vegGroup = new THREE.Group();
-    vegGroup.visible = sceneVegetationEnabled;
-    
-    const treePositions = [
-      new THREE.Vector3(center.x - halfW + 1.5, 0, center.z - halfD + 1.5),
-      new THREE.Vector3(center.x + halfW - 1.5, 0, center.z - halfD + 1.5),
-      new THREE.Vector3(center.x - halfW + 1.5, 0, center.z + halfD - 1.5),
-      new THREE.Vector3(center.x + halfW - 1.5, 0, center.z + halfD - 1.5),
-      new THREE.Vector3(center.x - halfW + 1.5, 0, center.z),
-      new THREE.Vector3(center.x + halfW - 1.5, 0, center.z),
-      new THREE.Vector3(center.x, 0, center.z - halfD + 1.5),
-      new THREE.Vector3(center.x, 0, center.z + halfD - 1.5),
-    ];
-    
-    treePositions.forEach(pos => {
-      const tree = new THREE.Group();
-      tree.position.copy(pos);
-      
-      const trunkGeom = new THREE.CylinderGeometry(0.08, 0.12, 0.8, 8);
-      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.9 });
-      const trunk = new THREE.Mesh(trunkGeom, trunkMat);
-      trunk.position.y = 0.4;
-      trunk.castShadow = true;
-      trunk.receiveShadow = true;
-      tree.add(trunk);
-      
-      const foliageGeom = new THREE.ConeGeometry(0.5, 1.4, 8);
-      const foliageMat = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.8, flatShading: true });
-      const foliage = new THREE.Mesh(foliageGeom, foliageMat);
-      foliage.position.y = 1.3;
-      foliage.castShadow = true;
-      foliage.receiveShadow = true;
-      tree.add(foliage);
-      
-      vegGroup.add(tree);
-    });
-    
-    scene.add(vegGroup);
-    vegetationGroupRef.current = vegGroup;
-
-    // 7. Build/Rebuild Spawn Point (Hologram ring at player starting spawn)
-    if (spawnPointMeshRef.current) {
-      disposeSimulatorObject3D(spawnPointMeshRef.current);
-      spawnPointMeshRef.current = null;
-    }
-    const spawnZ = box.min.z - 5.0;
-    const spawnGeom = new THREE.RingGeometry(0.4, 0.45, 32);
-    spawnGeom.rotateX(-Math.PI / 2);
-    const spawnMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, side: THREE.DoubleSide, transparent: true, opacity: 0.8 });
-    const spawnMesh = new THREE.Mesh(spawnGeom, spawnMat);
-    spawnMesh.position.set(center.x, 0.01, spawnZ);
-    spawnMesh.visible = sceneSpawnPointEnabled;
-    scene.add(spawnMesh);
-    spawnPointMeshRef.current = spawnMesh;
   };
 
   const applyDisplayMode = (scene: THREE.Scene, mode: 'real' | 'analyze' | 'night-vision' | 'orientation') => {
@@ -1393,106 +1231,7 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
     pluginRegistry.register(new AnalysisEnginePluginAdapter(windEngine));
     EngineRegistry.getInstance().initializeAll(scene, camera, renderer);
 
-    // 5b. CREATE SUN ANALYSIS VISUALS
-    const sunGroup = new THREE.Group();
-    sunGroup.visible = false;
-    scene.add(sunGroup);
-    sunGroupRef.current = sunGroup;
-
-    // Semi-circle sun trajectory arc across the sky
-    const sunPathPoints = [];
-    const sunPathDistance = 1000;
-    for (let theta = 0; theta <= Math.PI; theta += 0.05) {
-      sunPathPoints.push(new THREE.Vector3(Math.cos(theta) * sunPathDistance, Math.sin(theta) * (sunPathDistance * 0.75), 0));
-    }
-    const sunPathGeom = new THREE.BufferGeometry().setFromPoints(sunPathPoints);
-    const sunPathMat = new THREE.LineDashedMaterial({
-      color: 0xf59e0b, // Amber yellow
-      dashSize: 50.0,  // Scaled up for large distance
-      gapSize: 25.0,   // Scaled up for large distance
-    });
-    const sunPathLine = new THREE.Line(sunPathGeom, sunPathMat);
-    sunPathLine.computeLineDistances();
-    sunGroup.add(sunPathLine);
-
-    // Glowing sun billboard sprite on Sky Dome
-    const sunTexture = createSunTexture();
-    const sunSpriteMat = new THREE.SpriteMaterial({
-      map: sunTexture || undefined,
-      color: 0xffffff,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    const sunSprite = new THREE.Sprite(sunSpriteMat);
-    sunSprite.scale.set(120, 120, 1);
-    sunGroup.add(sunSprite);
-    sunSphereRef.current = sunSprite;
-
-    // 5c. CREATE WIND ANALYSIS VISUALS (Procedural stream dashes)
-    const windGroup = new THREE.Group();
-    windGroup.visible = false;
-    scene.add(windGroup);
-    windGroupRef.current = windGroup;
-
-    const windParticleGeom = new THREE.CylinderGeometry(0.012, 0.012, 0.5, 6);
-    windParticleGeom.rotateX(Math.PI / 2); // Align cylinder axis along flow vector (Z-axis)
-
-    for (let i = 0; i < 16; i++) {
-      const windMat = new THREE.MeshBasicMaterial({
-        color: 0x22d3ee, // Soft Cyan
-        transparent: true,
-        opacity: 0.45,
-        depthWrite: false,
-      });
-      const windMesh = new THREE.Mesh(windParticleGeom, windMat);
-      
-      // Seed offset relative to player
-      windMesh.userData = {
-        offset: new THREE.Vector3(
-          (Math.random() - 0.5) * 10,
-          Math.random() * 2.2,
-          (Math.random() - 0.5) * 10
-        ),
-        initialized: true
-      };
-      windGroup.add(windMesh);
-    }
-
-    // 5d. CREATE ACCESSIBILITY ANALYSIS VISUALS (ADA wheelchair turning space, warnings)
-    const accessibilityGroup = new THREE.Group();
-    accessibilityGroup.visible = false;
-    scene.add(accessibilityGroup);
-    accessibilityGroupRef.current = accessibilityGroup;
-
-    // Standard ADA 1.5m (60-inch) diameter wheelchair turning circle (radius = 0.75m)
-    const turningCircleGeom = new THREE.RingGeometry(0.74, 0.76, 48);
-    const turningCircleMat = new THREE.MeshBasicMaterial({
-      color: 0x06b6d4, // Cyan
-      transparent: true,
-      opacity: 0.7,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    const turningCircle = new THREE.Mesh(turningCircleGeom, turningCircleMat);
-    turningCircle.rotation.x = -Math.PI / 2; // Flat on floor
-    turningCircle.position.y = 0.02; // Elevated slightly to prevent z-fighting with floors
-    accessibilityGroup.add(turningCircle);
-    turningCircleRef.current = turningCircle;
-
-    // Inside turning circle, add a subtle filled transparent disc to make it stand out
-    const innerDiscGeom = new THREE.CircleGeometry(0.74, 32);
-    const innerDiscMat = new THREE.MeshBasicMaterial({
-      color: 0x06b6d4,
-      transparent: true,
-      opacity: 0.08,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    const innerDisc = new THREE.Mesh(innerDiscGeom, innerDiscMat);
-    innerDisc.rotation.x = -Math.PI / 2;
-    innerDisc.position.y = 0.015;
-    accessibilityGroup.add(innerDisc);
+    createAnalysisEnvironmentObjects(scene);
 
     // 4. CREATE PROCEDURAL 3D AVATAR GROUP (Torso, head, wheelchair, directions)
     const avatarGroup = new THREE.Group();
@@ -1675,12 +1414,7 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
         EngineRegistry.getInstance().unregister('wind-engine');
         windEngineRef.current = null;
       }
-      disposeSimulatorObject3D(siteBoundaryRef.current);
-      siteBoundaryRef.current = null;
-      disposeSimulatorObject3D(vegetationGroupRef.current);
-      vegetationGroupRef.current = null;
-      disposeSimulatorObject3D(spawnPointMeshRef.current);
-      spawnPointMeshRef.current = null;
+      cleanupEnvironmentObjects();
       disposeSimulatorObject3D(fpArmGroupRef.current);
       fpArmGroupRef.current = null;
       disposeSimulatorObject3D(dynReachGroupRef.current);
@@ -1689,14 +1423,6 @@ export const SimulatorCanvas: React.FC<SimulatorCanvasProps> = ({
       reachSphereRef.current = null;
       disposeSimulatorObject3D(clearanceCylinderRef.current);
       clearanceCylinderRef.current = null;
-      disposeSimulatorObject3D(sunGroupRef.current);
-      sunGroupRef.current = null;
-      sunSphereRef.current = null;
-      disposeSimulatorObject3D(windGroupRef.current);
-      windGroupRef.current = null;
-      disposeSimulatorObject3D(accessibilityGroupRef.current);
-      accessibilityGroupRef.current = null;
-      turningCircleRef.current = null;
       disposeSimulatorObject3D(avatarGroupRef.current);
       avatarGroupRef.current = null;
       runtimeRef.current?.dispose();
