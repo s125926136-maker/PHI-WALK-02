@@ -52,6 +52,46 @@ const createArchitecturalMaterials = () => {
   };
 };
 
+const disposeObjectResources = (object: THREE.Object3D): void => {
+  const disposedGeometries = new Set<THREE.BufferGeometry>();
+  const disposedMaterials = new Set<THREE.Material>();
+  const disposedTextures = new Set<THREE.Texture>();
+
+  object.traverse((child) => {
+    const disposable = child as THREE.Object3D & {
+      geometry?: THREE.BufferGeometry;
+      material?: THREE.Material | THREE.Material[];
+    };
+
+    if (disposable.geometry && !disposedGeometries.has(disposable.geometry)) {
+      disposedGeometries.add(disposable.geometry);
+    }
+
+    const materials = Array.isArray(disposable.material)
+      ? disposable.material
+      : disposable.material
+        ? [disposable.material]
+        : [];
+
+    materials.forEach((material) => {
+      if (!disposedMaterials.has(material)) {
+        disposedMaterials.add(material);
+      }
+
+      Object.keys(material).forEach((key) => {
+        const value = (material as unknown as Record<string, unknown>)[key];
+        if (value instanceof THREE.Texture && !disposedTextures.has(value)) {
+          disposedTextures.add(value);
+        }
+      });
+    });
+  });
+
+  disposedTextures.forEach((texture) => texture.dispose());
+  disposedMaterials.forEach((material) => material.dispose());
+  disposedGeometries.forEach((geometry) => geometry.dispose());
+};
+
 export const buildApartment = (scene: THREE.Scene): THREE.Group => {
   const group = new THREE.Group();
   group.name = 'apartment';
@@ -284,6 +324,7 @@ export const buildInteractiveCorridor = (
   // Remove any previous corridor if it exists in scene
   const existing = scene.getObjectByName('corridor');
   if (existing) {
+    disposeObjectResources(existing);
     scene.remove(existing);
   }
 
